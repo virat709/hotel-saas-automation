@@ -21,7 +21,7 @@ console.log('Firebase Config Loaded:', {
 // Avoid crashing during Netlify/Vercel build step if env variables are missing
 const app = getApps().length === 0 && firebaseConfig.apiKey
   ? initializeApp(firebaseConfig)
-  : getApps().length > 0 ? getApps()[0] : null;
+  : getApps().length > 0 ? getApps()[0] : undefined;
 
 export const auth = app ? getAuth(app) : null as any;
 export const db = app ? getFirestore(app) : null as any;
