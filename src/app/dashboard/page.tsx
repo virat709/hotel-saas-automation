@@ -489,12 +489,15 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (!user) { router.push('/login'); return; }
-      setUserId(user.uid);
-      loadHotel(user.uid);
-    });
-    return unsub;
+    let unsub = () => {};
+    if (auth) {
+      unsub = onAuthStateChanged(auth, (user) => {
+        if (!user) { router.push('/login'); return; }
+        setUserId(user.uid);
+        loadHotel(user.uid);
+      });
+    }
+    return () => unsub();
   }, [router, loadHotel]);
 
   // Request FCM token and save to hotel

@@ -16,14 +16,17 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        if (userDoc.exists() && userDoc.data()?.hotelId) {
-          router.push('/dashboard');
+    let unsub = () => {};
+    if (auth) {
+      unsub = onAuthStateChanged(auth, async (user) => {
+        if (user) {
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          if (userDoc.exists() && userDoc.data()?.hotelId) {
+            router.push('/dashboard');
+          }
         }
-      }
-    });
+      });
+    }
     return () => unsub();
   }, [router]);
 

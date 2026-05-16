@@ -82,11 +82,14 @@ export default function OnboardingPage() {
   const [utr, setUtr] = useState('');
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      if (!user) { router.push('/login'); return; }
-      setUserId(user.uid);
-    });
-    return unsub;
+    let unsub = () => {};
+    if (auth) {
+      unsub = onAuthStateChanged(auth, (user) => {
+        if (!user) { router.push('/login'); return; }
+        setUserId(user.uid);
+      });
+    }
+    return () => unsub();
   }, [router]);
 
   const toggleService = (id: string) => {

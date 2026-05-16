@@ -20,16 +20,19 @@ function SignupContent() {
   const inviteRole = searchParams.get('role') || 'owner';
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-        if (userDoc.exists() && userDoc.data().hotelId) {
-          router.push('/dashboard');
-        } else {
-          router.push('/onboarding');
+    let unsub = () => {};
+    if (auth) {
+      unsub = onAuthStateChanged(auth, async (user) => {
+        if (user) {
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          if (userDoc.exists() && userDoc.data().hotelId) {
+            router.push('/dashboard');
+          } else {
+            router.push('/onboarding');
+          }
         }
-      }
-    });
+      });
+    }
     return () => unsub();
   }, [router]);
 

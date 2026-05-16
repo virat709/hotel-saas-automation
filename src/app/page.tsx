@@ -58,17 +58,20 @@ export default function LandingPage() {
     const handler = () => setScrolled(window.scrollY > 50);
     window.addEventListener('scroll', handler);
     
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      if (u) {
-        const userDoc = await getDoc(doc(db, 'users', u.uid));
-        if (userDoc.exists() && userDoc.data()?.hotelId) setHasHotel(true);
-      }
-    });
+    let unsub: () => void;
+    if (auth) {
+      unsub = onAuthStateChanged(auth, async (u) => {
+        setUser(u);
+        if (u) {
+          const userDoc = await getDoc(doc(db, 'users', u.uid));
+          if (userDoc.exists() && userDoc.data()?.hotelId) setHasHotel(true);
+        }
+      });
+    }
 
     return () => {
       window.removeEventListener('scroll', handler);
-      unsub();
+      if (unsub) unsub();
     };
   }, []);
 
