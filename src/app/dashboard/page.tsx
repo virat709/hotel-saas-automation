@@ -723,11 +723,10 @@ export default function DashboardPage() {
             { id: 'settings', icon: '⚙️', label: 'Settings', ownerOnly: true },
           ].filter(item => {
             if (item.ownerOnly && userRole?.toLowerCase() !== 'owner') return false;
-            if (hotel?.plan === 'standard') {
-              if (['analytics', 'rooms', 'team'].includes(item.id)) return false;
-            }
             return true;
-          }).map(item => (
+          }).map(item => {
+            const isLocked = ['analytics', 'rooms', 'team', 'orders', 'menu'].includes(item.id) && hotel?.plan === 'standard';
+            return (
             <button
               key={item.id}
               className={`${styles.navItem} ${activeTab === item.id ? styles.navActive : ''}`}
@@ -735,12 +734,26 @@ export default function DashboardPage() {
             >
               <span className={styles.navIcon}>{item.icon}</span>
               <span>{item.label}</span>
-              {(item as any).badge ? <span className={styles.navBadge}>{(item as any).badge}</span> : null}
+              {isLocked && <span style={{ marginLeft: 'auto', fontSize: '0.9rem' }}>🔒</span>}
+              {!isLocked && (item as any).badge ? <span className={styles.navBadge}>{(item as any).badge}</span> : null}
             </button>
-          ))}
+            );
+          })}
         </nav>
+        {hotel?.plan === 'standard' && (
+          <div style={{ padding: '16px', marginTop: 'auto' }}>
+            <button
+              className="btn btn-primary"
+              style={{ width: '100%', justifyContent: 'center', background: 'linear-gradient(135deg, #FFD700 0%, #D4AF37 100%)', color: '#000', border: 'none', fontWeight: 'bold' }}
+              onClick={() => setActiveTab('analytics')}
+            >
+              👑 Upgrade Premium
+            </button>
+          </div>
+        )}
         <button
           className={styles.logoutBtn}
+          style={hotel?.plan === 'standard' ? { marginTop: '8px' } : {}}
           onClick={async () => { await signOut(auth); router.push('/'); }}
         >
           🚪 Sign Out
@@ -880,13 +893,13 @@ export default function DashboardPage() {
         {toast && <div className="toast toast-success">{toast}</div>}
 
         {/* ── Premium Locked Screen ── */}
-        {['analytics', 'rooms', 'team'].includes(activeTab) && hotel?.plan === 'standard' && (
+        {['analytics', 'rooms', 'team', 'orders', 'menu'].includes(activeTab) && hotel?.plan === 'standard' && (
           <div className={styles.tabContent}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '40px 20px', maxWidth: '500px', margin: '40px auto', background: 'var(--glass)', border: '1px solid var(--glass-b)', borderRadius: 'var(--r-lg)' }}>
               <div style={{ background: 'rgba(109,40,217,.1)', color: 'var(--mid)', fontSize: '3rem', width: '80px', height: '80px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>👑</div>
               <h2 style={{ fontFamily: 'Outfit', fontSize: '1.8rem', marginBottom: '16px', color: 'var(--text)' }}>Unlock Premium Features</h2>
               <p style={{ color: 'var(--muted)', marginBottom: '32px', fontSize: '0.95rem', lineHeight: '1.5' }}>
-                You need the Premium plan to access Analytics, Room Management, and Team Collaboration. Upgrade now for unlimited access at ₹7,999/year.
+                You need the Premium plan to access Food Orders, Room Management, Analytics, and Team Collaboration. Upgrade now for unlimited access at ₹7,999/year.
               </p>
               
               <div style={{ background: '#fff', padding: '16px', borderRadius: '16px', marginBottom: '16px' }}>
@@ -981,7 +994,7 @@ export default function DashboardPage() {
         )}
 
         {/* ── Orders ── */}
-        {activeTab === 'orders' && (
+        {activeTab === 'orders' && hotel?.plan !== 'standard' && (
           <div className={styles.tabContent}>
             {orders.length === 0 ? (
               <div className={styles.emptyState}>
@@ -1039,7 +1052,7 @@ export default function DashboardPage() {
         )}
 
         {/* ── Menu Management ── */}
-        {activeTab === 'menu' && hotel && userRole?.toLowerCase() === 'owner' && (
+        {activeTab === 'menu' && hotel && userRole?.toLowerCase() === 'owner' && hotel?.plan !== 'standard' && (
           <div className={styles.tabContent}>
             <div className={styles.menuHeader}>
               <button className="btn btn-primary btn-sm" onClick={() => setShowAddModal(true)}>+ Add New Item</button>

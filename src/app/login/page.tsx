@@ -38,6 +38,9 @@ export default function LoginPage() {
     setError('');
 
     try {
+      if (!auth) {
+        throw new Error('Firebase configuration is missing. Please ensure your environment variables are correctly set on your deployment platform.');
+      }
       const cred = await signInWithEmailAndPassword(auth, email, password);
 
       // Check if hotel onboarding is complete
