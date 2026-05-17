@@ -250,10 +250,10 @@ export default function LandingPage() {
       <footer className={styles.footer}>
         <div className="container">
           <div className={styles.footerInner}>
-            <div className="nav-logo">
+            <Link href="/admin" className="nav-logo" style={{ textDecoration: 'none', cursor: 'default' }}>
               <span>🏨</span>
               <span>Hotel<span className="gradient-text">QR</span></span>
-            </div>
+            </Link>
             <p style={{ fontSize: '.85rem' }}>Powered by V4 Virtual Services, Ahmedabad</p>
             <div className={styles.footerLinks}>
               <Link href="/privacy">Privacy Policy</Link>

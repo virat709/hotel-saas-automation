@@ -26,7 +26,7 @@ interface Hotel {
 }
 
 // ─── Constants ───────────────────────────────────────────
-const ADMIN_PASSWORD = 'hotelqr@admin2024';
+const ADMIN_PASSWORD = 'vrvirtuals';
 
 const PLAN_DURATION: Record<string, number> = {
   standard: 1,   // 1 month free trial
