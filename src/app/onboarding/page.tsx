@@ -144,6 +144,8 @@ export default function OnboardingPage() {
         plan, // Store the selected plan
         paymentUtr: utr || null, // Store UTR if paid
         createdAt: new Date().toISOString(),
+        planStartDate: new Date().toISOString(),
+        planDurationMonths: plan === 'standard' ? 1 : 12,
         active: true,
       };
 
