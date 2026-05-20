@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, collection, query, where, onSnapshot, updateDoc, orderBy, setDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, onSnapshot, updateDoc, orderBy, setDoc, deleteField } from 'firebase/firestore';
 import { auth, db, requestNotificationPermission } from '@/lib/firebase';
 import QRCode from 'react-qr-code';
 import styles from './dashboard.module.css';
@@ -19,7 +19,7 @@ interface HotelData {
   customServiceLabels?: Record<string, string>;
   menu: { id: string; name: string; price: string; category: string; description: string }[];
   active: boolean;
-  rooms?: { id: string; status: 'empty' | 'occupied'; guestName?: string; checkInTime?: string }[];
+  rooms?: { id: string; status: 'empty' | 'occupied'; guestName?: string; phone?: string; checkInTime?: string }[];
   telegramChatId?: string;
   wifiName?: string;
   wifiPassword?: string;
@@ -70,8 +70,11 @@ export default function DashboardPage() {
   // Services editor state
   const [editingServices, setEditingServices] = useState(false);
   const [servicesDraft, setServicesDraft] = useState<string[]>([]);
+  const [customSvcInput, setCustomSvcInput] = useState('');
+  const [customSvcLabelsDraft, setCustomSvcLabelsDraft] = useState<Record<string, string>>({});
   const [telegramInput, setTelegramInput] = useState('');
   const [staffMembers, setStaffMembers] = useState<{ id: string; name: string; email: string; role: string }[]>([]);
+  const [roomListInput, setRoomListInput] = useState(''); // Controlled state for room textarea
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
   const [tempStaffName, setTempStaffName] = useState('');
   const [showAddStaffModal, setShowAddStaffModal] = useState(false);
@@ -82,6 +85,15 @@ export default function DashboardPage() {
   const [upgradeUtr, setUpgradeUtr] = useState('');
   const [upgradeLoading, setUpgradeLoading] = useState(false);
   const [upgradeError, setUpgradeError] = useState('');
+
+  // Feature 2: Subscription expiry state
+  const [daysToExpiry, setDaysToExpiry] = useState<number | null>(null);
+
+  // Feature 5: Per-room QR modal
+  const [roomQrModal, setRoomQrModal] = useState<string | null>(null); // room ID
+
+  // Feature 1: Guest ratings
+  const [ratings, setRatings] = useState<{ rating: number; comment?: string; roomNumber: string; guestName: string; createdAt: string }[]>([]);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -95,11 +107,48 @@ export default function DashboardPage() {
 
     const hotelDoc = await getDoc(doc(db, 'hotels', userData.hotelId));
     if (hotelDoc.exists()) {
-      setHotel({ id: hotelDoc.id, ...hotelDoc.data() } as HotelData);
+      const hotelData = { id: hotelDoc.id, ...hotelDoc.data() } as HotelData;
+      setHotel(hotelData);
       setUserRole(userData.role || 'owner');
+      setRoomListInput((hotelData.rooms || []).map((r: any) => r.id).join(', '));
+      // Feature 2: Calculate days to subscription expiry
+      const startStr = (hotelData as any).planStartDate;
+      const months = (hotelData as any).planDurationMonths || 12;
+      if (startStr) {
+        const expiry = new Date(startStr);
+        expiry.setMonth(expiry.getMonth() + months);
+        setDaysToExpiry(Math.ceil((expiry.getTime() - Date.now()) / 86400000));
+      }
     }
     setLoading(false);
   }, [router]);
+
+  // Feature 3: Export orders to CSV
+  const exportOrdersCSV = () => {
+    if (!orders.length) { showToast('No orders to export.'); return; }
+    const header = 'Order ID,Room,Guest,Type,Items/Service,Total,Status,Date';
+    const rows = orders.map(o =>
+      [
+        o.id,
+        o.roomNumber,
+        o.guestName,
+        o.type,
+        o.items ? o.items.join(' | ') : (o.service || ''),
+        o.total ? `₹${o.total}` : '-',
+        o.status,
+        new Date(o.createdAt).toLocaleString('en-IN'),
+      ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
+    ).join('\n');
+    const csv = `${header}\n${rows}`;
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${hotel?.name || 'hotel'}-orders-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Orders exported! 📅');
+  };
 
   // Menu functions
   const saveMenuItem = async () => {
@@ -123,12 +172,32 @@ export default function DashboardPage() {
 
   const updateRoomStatus = async (roomId: string, status: 'empty' | 'occupied', guestName?: string, phone?: string) => {
     if (!hotel) return;
-    const updatedRooms = (hotel.rooms || []).map(r => 
-      r.id === roomId ? { ...r, status, guestName, phone, checkInTime: status === 'occupied' ? new Date().toISOString() : undefined } : r
-    );
-    await updateDoc(doc(db, 'hotels', hotel.id), { rooms: updatedRooms });
-    setHotel({ ...hotel, rooms: updatedRooms });
-    showToast(`Room ${roomId} updated.`);
+
+    let newRooms;
+    if (status === 'empty') {
+      // Checkout: preserve all room fields, null-clear guest data so Firestore stores null (not undefined)
+      newRooms = (hotel.rooms || []).map(r =>
+        r.id === roomId
+          ? { ...r, status: 'empty' as const, guestName: null, phone: null, checkInTime: null }
+          : r
+      );
+    } else {
+      // Check-in: set guest data
+      newRooms = (hotel.rooms || []).map(r =>
+        r.id === roomId
+          ? { ...r, status: 'occupied' as const, guestName: guestName ?? '', phone: phone ?? '', checkInTime: new Date().toISOString() }
+          : r
+      );
+    }
+
+    try {
+      await updateDoc(doc(db, 'hotels', hotel.id), { rooms: newRooms });
+      setHotel({ ...hotel, rooms: newRooms as typeof hotel.rooms });
+      showToast(status === 'occupied' ? `✅ Room ${roomId} checked in!` : `🚪 Room ${roomId} checked out.`);
+    } catch (err) {
+      console.error('Room update error:', err);
+      showToast('Failed to update room. Please try again.');
+    }
   };
 
   const sendOtp = async () => {
@@ -196,8 +265,9 @@ export default function DashboardPage() {
 
   const saveServices = async () => {
     if (!hotel) return;
-    await updateDoc(doc(db, 'hotels', hotel.id), { services: servicesDraft });
-    setHotel({ ...hotel, services: servicesDraft });
+    const newLabels = { ...hotel.customServiceLabels, ...customSvcLabelsDraft };
+    await updateDoc(doc(db, 'hotels', hotel.id), { services: servicesDraft, customServiceLabels: newLabels });
+    setHotel({ ...hotel, services: servicesDraft, customServiceLabels: newLabels });
     setEditingServices(false);
     showToast('Services updated!');
   };
@@ -251,12 +321,28 @@ export default function DashboardPage() {
     img.src = `data:image/svg+xml;base64,${btoa(svgData)}`;
   };
 
-  const printTableCard = () => {
+  const printTableCard = async () => {
     if (!hotel) return;
+
+    // Convert QR SVG → PNG dataURL so it renders in the print window
+    const svgEl = document.getElementById('hotel-qr') as SVGSVGElement | null;
+    if (!svgEl) { showToast('QR not ready — please wait a moment and try again.'); return; }
+    const qrDataUrl = await new Promise<string>((resolve, reject) => {
+      const svgData = new XMLSerializer().serializeToString(svgEl);
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+      const svgUrl = URL.createObjectURL(svgBlob);
+      const canvas = document.createElement('canvas');
+      canvas.width = 500; canvas.height = 500;
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+      img.onload = () => { ctx?.drawImage(img, 0, 0, 500, 500); URL.revokeObjectURL(svgUrl); resolve(canvas.toDataURL('image/png')); };
+      img.onerror = () => { URL.revokeObjectURL(svgUrl); reject(new Error('SVG load failed')); };
+      img.src = svgUrl;
+    }).catch(() => { showToast('Failed to render QR. Please try again.'); return ''; });
+    if (!qrDataUrl) return;
+
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
-
-    const qrSvg = document.getElementById('hotel-qr')?.outerHTML || '';
 
     printWindow.document.write(`
       <html>
@@ -447,8 +533,10 @@ export default function DashboardPage() {
             </div>
             
             <div class="qr-container">
-              ${qrSvg}
+              <img src="${qrDataUrl}" alt="V4Stay QR Code" style="width:100%;height:100%;display:block;" />
             </div>
+            <!-- Hotel name sits on the dark band below the QR -->
+            <div style="font-family:'Cinzel',serif;color:#fff;font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-top:10px;z-index:2;text-shadow:0 1px 4px rgba(0,0,0,0.6);">${hotel.name}</div>
             
             <div class="scan-btn">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
@@ -543,6 +631,19 @@ export default function DashboardPage() {
     }, (error) => {
       console.warn("Orders listener error:", error);
     });
+    return unsub;
+  }, [hotel?.id]);
+
+  // Feature 1: Live ratings listener
+  useEffect(() => {
+    if (!hotel?.id) return;
+    const q = query(collection(db, 'ratings'), where('hotelId', '==', hotel.id));
+    const unsub = onSnapshot(q, (snap) => {
+      const ratingList = snap.docs
+        .map(d => d.data() as any)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setRatings(ratingList);
+    }, err => console.warn('Ratings listener error:', err));
     return unsub;
   }, [hotel?.id]);
 
@@ -707,8 +808,8 @@ export default function DashboardPage() {
       {/* Sidebar */}
       <aside className={styles.sidebar}>
         <div className={styles.sidebarLogo}>
-          <span>🏨</span>
-          <span>Hotel<span className="gradient-text">QR</span></span>
+          <img src="/v4-logo.png" alt="V4Stay Logo" style={{ height: '32px', width: 'auto', objectFit: 'contain', marginRight: '8px' }} />
+          <span>V4<span className="gradient-text">Stay</span></span>
         </div>
         <div className={styles.hotelName}>{hotel?.name}</div>
         <nav className={styles.sideNav}>
@@ -754,7 +855,7 @@ export default function DashboardPage() {
         <button
           className={styles.logoutBtn}
           style={hotel?.plan === 'standard' ? { marginTop: '8px' } : {}}
-          onClick={async () => { await signOut(auth); router.push('/'); }}
+          onClick={async () => { if (auth) { await signOut(auth); } router.push('/'); }}
         >
           🚪 Sign Out
         </button>
@@ -763,97 +864,43 @@ export default function DashboardPage() {
       {/* ── Check-In Modal ── */}
       {checkInModal && (
         <div className={styles.modalOverlay}>
-          <div className={styles.modal} style={{ maxWidth: '480px' }}>
+          <div className={styles.modal} style={{ maxWidth: '440px' }}>
             <h3 style={{ marginBottom: '6px', fontSize: '1.2rem' }}>
               🏨 Check In — Room {checkInModal.roomId}
             </h3>
-            <p style={{ fontSize: '.82rem', color: 'var(--muted)', marginBottom: '20px' }}>
-              Fill guest details and send OTP to their phone to verify identity.
+            <p style={{ fontSize: '.82rem', color: 'var(--muted)', marginBottom: '24px' }}>
+              Enter guest details to complete check-in.
             </p>
 
-            {/* Step 1: Guest Details */}
             <div className={styles.modalForm}>
               <div className="form-group">
                 <label className="form-label">Guest Name *</label>
-                <input className="form-input" placeholder="e.g. Ravi Shah" value={checkInForm.guestName}
+                <input
+                  className="form-input"
+                  placeholder="e.g. Ravi Shah"
+                  value={checkInForm.guestName}
                   onChange={e => setCheckInForm(f => ({ ...f, guestName: e.target.value }))}
-                  disabled={otpSent} />
+                />
               </div>
               <div className="form-group">
                 <label className="form-label">Mobile Number *</label>
-                <input className="form-input" type="tel" placeholder="98765 43210" value={checkInForm.phone}
+                <input
+                  className="form-input"
+                  type="tel"
+                  placeholder="98765 43210"
+                  value={checkInForm.phone}
                   onChange={e => setCheckInForm(f => ({ ...f, phone: e.target.value }))}
-                  disabled={otpSent} />
+                />
               </div>
             </div>
 
-            {/* OTP Section */}
-            <div style={{ marginTop: '16px', padding: '20px', background: 'var(--glass)', borderRadius: 'var(--r)', border: '1px solid var(--glass-b)' }}>
-              {otpError && (
-                <div style={{ color: 'var(--danger)', fontSize: '.82rem', marginBottom: '12px', fontWeight: 600 }}>
-                  ⚠ {otpError}
-                </div>
-              )}
-
-              {!otpSent ? (
-                /* Step 1: Send OTP button */
-                <div>
-                  <div style={{ fontSize: '.85rem', color: 'var(--muted)', marginBottom: '12px' }}>
-                    🔐 An OTP will be sent to the guest&apos;s mobile number
-                  </div>
-                  <button className="btn btn-primary btn-sm"
-                    disabled={!checkInForm.guestName || !checkInForm.phone || otpLoading}
-                    onClick={sendOtp}>
-                    {otpLoading ? <><span className="spinner" style={{ width: 14, height: 14, marginRight: 6 }} /> Sending...</> : '📱 Send OTP to Guest'}
-                  </button>
-                </div>
-              ) : !otpVerified ? (
-                /* Step 2: OTP sent — verify it */
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <span style={{ fontSize: '.85rem', color: 'var(--success)', fontWeight: 600 }}>
-                      ✓ OTP sent to {checkInForm.phone}
-                    </span>
-                    <button style={{ fontSize: '.75rem', color: 'var(--mid)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
-                      onClick={() => { setOtpSent(false); setOtpError(''); }}>
-                      Change number
-                    </button>
-                  </div>
-
-                  {/* DEV mode: show OTP on screen */}
-                  {devOtp && (
-                    <div style={{ background: 'rgba(234,179,8,.1)', border: '1px solid rgba(234,179,8,.3)', borderRadius: '8px', padding: '10px 14px', fontSize: '.8rem', color: '#ca8a04' }}>
-                      ⚠ DEV MODE — OTP: <strong style={{ letterSpacing: '.15em', fontSize: '1.1rem' }}>{devOtp}</strong>
-                      <br/><span style={{ fontSize: '.72rem' }}>Add FAST2SMS_API_KEY to .env.local for real SMS</span>
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <input className="form-input"
-                      placeholder="Enter OTP from guest"
-                      value={checkInForm.otp}
-                      style={{ maxWidth: '180px', textAlign: 'center', letterSpacing: '.2em', fontWeight: 700, fontSize: '1.1rem' }}
-                      onChange={e => setCheckInForm(f => ({ ...f, otp: e.target.value }))}
-                      maxLength={6} />
-                    <button className="btn btn-primary btn-sm"
-                      disabled={checkInForm.otp.length < 4 || otpLoading}
-                      onClick={verifyOtp}>
-                      {otpLoading ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Verify →'}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* Step 3: Verified */
-                <div style={{ color: 'var(--success)', fontWeight: 700, fontSize: '.95rem' }}>
-                  ✓ Identity Verified — Ready to check in
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
-              <button className="btn btn-primary btn-sm"
-                disabled={!checkInForm.guestName || !checkInForm.phone || !otpVerified}
-                onClick={confirmCheckIn}>
+            <div style={{ display: 'flex', gap: '12px', marginTop: '24px' }}>
+              <button
+                className="btn btn-primary btn-sm"
+                style={{ flex: 1, justifyContent: 'center' }}
+                disabled={!checkInForm.guestName || !checkInForm.phone}
+                onClick={confirmCheckIn}
+              >
                 ✓ Confirm Check In
               </button>
               <button className="btn btn-ghost btn-sm" onClick={() => setCheckInModal(null)}>Cancel</button>
@@ -892,6 +939,36 @@ export default function DashboardPage() {
 
         {toast && <div className="toast toast-success">{toast}</div>}
 
+        {/* Feature 2: Subscription Expiry Banner */}
+        {daysToExpiry !== null && daysToExpiry <= 30 && daysToExpiry > 0 && (
+          <div style={{ margin: '0 0 20px', padding: '14px 20px', borderRadius: 'var(--r)', background: daysToExpiry <= 7 ? 'rgba(239,68,68,.1)' : 'rgba(234,179,8,.1)', border: `1px solid ${daysToExpiry <= 7 ? 'rgba(239,68,68,.3)' : 'rgba(234,179,8,.3)'}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '1.4rem' }}>{daysToExpiry <= 7 ? '🚨' : '⏰'}</span>
+              <div>
+                <div style={{ fontWeight: 700, color: daysToExpiry <= 7 ? 'var(--danger)' : '#ca8a04', fontSize: '.9rem' }}>
+                  {daysToExpiry <= 7 ? `⚠️ Subscription expires in ${daysToExpiry} day${daysToExpiry === 1 ? '' : 's'}!` : `Your plan expires in ${daysToExpiry} days`}
+                </div>
+                <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: '2px' }}>Renew now to avoid service interruption</div>
+              </div>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={() => setActiveTab('analytics')} style={{ whiteSpace: 'nowrap' }}>
+              Renew Plan →
+            </button>
+          </div>
+        )}
+        {daysToExpiry !== null && daysToExpiry <= 0 && (
+          <div style={{ margin: '0 0 20px', padding: '14px 20px', borderRadius: 'var(--r)', background: 'rgba(239,68,68,.15)', border: '2px solid rgba(239,68,68,.4)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '1.4rem' }}>🔴</span>
+              <div>
+                <div style={{ fontWeight: 700, color: 'var(--danger)', fontSize: '.9rem' }}>Subscription Expired!</div>
+                <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: '2px' }}>Your plan has expired. Please renew to continue using all features.</div>
+              </div>
+            </div>
+            <button className="btn btn-primary btn-sm" onClick={() => setActiveTab('analytics')} style={{ background: 'var(--danger)', whiteSpace: 'nowrap' }}>Renew Now →</button>
+          </div>
+        )}
+
         {/* ── Premium Locked Screen ── */}
         {['analytics', 'rooms', 'team', 'orders', 'menu'].includes(activeTab) && hotel?.plan === 'standard' && (
           <div className={styles.tabContent}>
@@ -903,9 +980,9 @@ export default function DashboardPage() {
               </p>
               
               <div style={{ background: '#fff', padding: '16px', borderRadius: '16px', marginBottom: '16px' }}>
-                <QRCode value={`upi://pay?pa=9652172595@axl&pn=Hotel%20SaaS&am=7999&cu=INR`} size={160} />
+                <QRCode value={`upi://pay?pa=9652172595@axl&pn=Hotel%20SaaS&am=9999&cu=INR`} size={160} />
               </div>
-              <h4 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text)', marginBottom: '4px' }}>₹7,999 <span style={{fontSize: '0.9rem', color: 'var(--muted)', fontWeight: 400}}>per year</span></h4>
+              <h4 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text)', marginBottom: '4px' }}>₹9,999 <span style={{fontSize: '0.9rem', color: 'var(--muted)', fontWeight: 400}}>per year</span></h4>
               <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '24px' }}>UPI ID: <b>9652172595@axl</b></p>
               
               <div style={{ width: '100%', maxWidth: '300px', textAlign: 'left' }}>
@@ -990,12 +1067,51 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
+
+            {/* Feature 1: Guest Ratings */}
+            <div style={{ marginTop: '20px', padding: '20px', background: 'var(--glass)', borderRadius: 'var(--r-lg)', border: '1px solid var(--glass-b)' }}>
+              <h3 style={{ color: 'var(--text)', marginBottom: '16px', fontSize: '1rem' }}>⭐ Guest Ratings & Feedback</h3>
+              {ratings.length === 0 ? (
+                <div style={{ color: 'var(--muted)', fontSize: '.85rem', textAlign: 'center', padding: '16px 0' }}>No ratings yet. Guests will be prompted after their first service request.</div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '16px' }}>
+                    <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text)' }}>
+                      {(ratings.reduce((s, r) => s + r.rating, 0) / ratings.length).toFixed(1)}
+                    </div>
+                    <div>
+                      <div style={{ color: '#f59e0b', fontSize: '1.2rem', letterSpacing: '2px' }}>
+                        {'⭐'.repeat(Math.round(ratings.reduce((s, r) => s + r.rating, 0) / ratings.length))}
+                      </div>
+                      <div style={{ fontSize: '.78rem', color: 'var(--muted)', marginTop: '2px' }}>{ratings.length} rating{ratings.length !== 1 ? 's' : ''}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '220px', overflowY: 'auto' }}>
+                    {ratings.slice(0, 10).map((r, i) => (
+                      <div key={i} style={{ padding: '10px 14px', background: 'var(--bg2)', borderRadius: '8px', border: '1px solid var(--glass-b)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                          <span style={{ fontWeight: 600, fontSize: '.85rem', color: 'var(--text)' }}>{r.guestName} · Room {r.roomNumber}</span>
+                          <span style={{ color: '#f59e0b', fontSize: '.85rem' }}>{'⭐'.repeat(r.rating)}</span>
+                        </div>
+                        {r.comment && <div style={{ fontSize: '.78rem', color: 'var(--muted)' }}>&ldquo;{r.comment}&rdquo;</div>}
+                        <div style={{ fontSize: '.7rem', color: 'var(--muted)', marginTop: '4px' }}>{new Date(r.createdAt).toLocaleDateString('en-IN')}</div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
 
         {/* ── Orders ── */}
         {activeTab === 'orders' && hotel?.plan !== 'standard' && (
           <div className={styles.tabContent}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+              <button className="btn btn-ghost btn-sm" onClick={exportOrdersCSV} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                📅 Export CSV
+              </button>
+            </div>
             {orders.length === 0 ? (
               <div className={styles.emptyState}>
                 <span style={{ fontSize: '3rem' }}>📭</span>
@@ -1170,6 +1286,130 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
+
+            {/* Feature 5: Per-Room QR Codes */}
+            {(hotel?.rooms || []).length > 0 && (
+              <div style={{ marginTop: '32px', padding: '24px', background: 'var(--glass)', borderRadius: 'var(--r-lg)', border: '1px solid var(--glass-b)' }}>
+                <h3 style={{ color: 'var(--text)', marginBottom: '8px', fontSize: '1.1rem' }}>🔑 Per-Room QR Codes</h3>
+                <p style={{ fontSize: '.82rem', color: 'var(--muted)', marginBottom: '20px' }}>Each QR auto-fills the room number for guests — no manual entry needed!</p>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '10px' }}>
+                  {(hotel?.rooms || []).map(room => (
+                    <button
+                      key={room.id}
+                      className="btn btn-ghost btn-sm"
+                      style={{ flexDirection: 'column', padding: '12px 8px', gap: '6px', height: 'auto', border: '1px solid var(--glass-b)', borderRadius: 'var(--r)' }}
+                      onClick={() => setRoomQrModal(room.id)}
+                    >
+                      <span style={{ fontSize: '1.4rem' }}>🔑</span>
+                      <span style={{ fontSize: '.78rem', fontWeight: 700 }}>Room {room.id}</span>
+                      <span style={{ fontSize: '.68rem', color: 'var(--muted)' }}>View QR</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Feature 5: Per-Room QR Modal */}
+        {roomQrModal && (
+          <div className={styles.modalOverlay} onClick={() => setRoomQrModal(null)}>
+            <div className={styles.modal} style={{ maxWidth: '360px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ margin: 0 }}>🔑 Room {roomQrModal} QR</h3>
+                <button onClick={() => setRoomQrModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--muted)' }}>✕</button>
+              </div>
+              <div style={{ background: '#fff', padding: '20px', borderRadius: '12px', marginBottom: '16px', display: 'inline-block' }}>
+                <QRCode
+                  id={`room-qr-${roomQrModal}`}
+                  value={`${guestUrl}?room=${roomQrModal}`}
+                  size={200}
+                  level="H"
+                />
+              </div>
+              <p style={{ fontSize: '.82rem', color: 'var(--muted)', marginBottom: '20px' }}>
+                Guests who scan this QR will have Room <strong>{roomQrModal}</strong> pre-filled automatically.
+              </p>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                <button className="btn btn-primary" onClick={async () => {
+                  const svgEl = document.getElementById(`room-qr-${roomQrModal}`) as SVGSVGElement | null;
+                  if (!svgEl || !hotel) return;
+                  // Convert per-room QR SVG → PNG
+                  const svgData = new XMLSerializer().serializeToString(svgEl);
+                  const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+                  const svgUrl = URL.createObjectURL(svgBlob);
+                  const qrPng = await new Promise<string>((res, rej) => {
+                    const c = document.createElement('canvas'); c.width = 500; c.height = 500;
+                    const ctx = c.getContext('2d'); const img = new Image();
+                    img.onload = () => { ctx?.drawImage(img, 0, 0, 500, 500); URL.revokeObjectURL(svgUrl); res(c.toDataURL('image/png')); };
+                    img.onerror = () => { URL.revokeObjectURL(svgUrl); rej(); };
+                    img.src = svgUrl;
+                  }).catch(() => '');
+                  if (!qrPng) { showToast('Failed to render QR'); return; }
+                  // Open same luxury card design in print window
+                  const pw = window.open('', '_blank');
+                  if (!pw) return;
+                  pw.document.write(`<!DOCTYPE html><html><head><title>Room ${roomQrModal} QR Card</title>
+                    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Outfit:wght@400;600&display=swap" rel="stylesheet">
+                    <style>
+                      body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#e5e5e5;font-family:'Outfit',sans-serif;}
+                      .card{width:105mm;height:148mm;background:#F4F1EA;position:relative;display:flex;flex-direction:column;align-items:center;box-shadow:0 10px 30px rgba(0,0,0,.15);overflow:hidden;}
+                      .top-logo-container{margin-top:25px;display:flex;flex-direction:column;align-items:center;z-index:2;}
+                      .circle-logo{width:45px;height:45px;background:#0B162C;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#C5A059;font-weight:bold;font-family:'Cinzel',serif;font-size:20px;margin-bottom:8px;overflow:hidden;}
+                      .hotel-name-top{font-family:'Cinzel',serif;color:#0B162C;font-weight:700;font-size:14px;text-transform:uppercase;letter-spacing:1px;}
+                      .divider{display:flex;align-items:center;justify-content:center;width:80%;margin:12px 0;}
+                      .divider::before,.divider::after{content:'';flex:1;height:1px;background:#C5A059;opacity:.5;}
+                      .divider span{color:#C5A059;font-size:8px;letter-spacing:2px;text-transform:uppercase;margin:0 10px;font-weight:600;}
+                      .heading-primary{font-family:'Cinzel',serif;color:#0B162C;font-size:18px;font-weight:700;margin-bottom:3px;text-align:center;}
+                      .heading-secondary{font-family:'Cinzel',serif;color:#C5A059;font-size:14px;font-weight:700;margin-bottom:4px;text-align:center;}
+                      .room-badge{background:#0B162C;color:#C5A059;font-family:'Cinzel',serif;font-size:12px;font-weight:700;letter-spacing:2px;padding:4px 16px;border-radius:20px;margin-bottom:16px;z-index:2;}
+                      .middle-band{position:absolute;top:38%;left:0;right:0;height:26%;background:#0B162C;z-index:1;}
+                      .qr-container{background:#fff;border:4px solid #C5A059;border-radius:12px;padding:12px;width:148px;height:148px;z-index:2;display:flex;align-items:center;justify-content:center;box-shadow:0 10px 20px rgba(0,0,0,.1);}
+                      .qr-container img{width:100%;height:100%;display:block;}
+                      .qr-hotel-name{font-family:'Cinzel',serif;color:#fff;font-size:8px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-top:8px;z-index:2;}
+                      .scan-btn{background:#C5A059;color:#fff;padding:7px 14px;border-radius:20px;font-size:9px;font-weight:600;letter-spacing:1px;margin-top:16px;z-index:2;display:flex;align-items:center;gap:6px;}
+                      .footer-section{margin-top:auto;margin-bottom:16px;width:100%;display:flex;flex-direction:column;align-items:center;z-index:2;}
+                      .footer-heading{font-family:'Cinzel',serif;color:#0B162C;font-size:12px;font-weight:700;margin-bottom:6px;}
+                      .footer-sub{font-size:8px;color:#C5A059;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;font-weight:600;}
+                      .bottom-features{display:flex;justify-content:center;gap:16px;width:100%;}
+                      .feature{display:flex;align-items:center;gap:5px;}
+                      .feature-icon{color:#C5A059;}
+                      .feature-text{font-size:7px;color:#0B162C;line-height:1.3;font-weight:600;}
+                      @media print{body{background:none;}.card{box-shadow:none;}}
+                    </style></head><body>
+                    <div class="card">
+                      <div class="middle-band"></div>
+                      <div class="top-logo-container">
+                        <div class="circle-logo"><img src="/v4-logo.png" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.parentElement.innerHTML='${hotel.name.charAt(0)}'" /></div>
+                        <div class="hotel-name-top">${hotel.name}</div>
+                      </div>
+                      <div class="divider"><span>HOSPITALITY REDEFINED</span></div>
+                      <div class="heading-primary">SCAN TO EXPERIENCE</div>
+                      <div class="heading-secondary">PREMIUM COMFORT</div>
+                      <div class="room-badge">ROOM ${roomQrModal}</div>
+                      <div class="qr-container"><img src="${qrPng}" alt="QR Code" /></div>
+                      <div class="qr-hotel-name">${hotel.name}</div>
+                      <div class="scan-btn">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                        SCAN WITH YOUR PHONE CAMERA
+                      </div>
+                      <div class="footer-section">
+                        <div class="footer-heading">WE'RE HERE FOR YOU</div>
+                        <div class="footer-sub">THANK YOU FOR CHOOSING ${hotel.name.toUpperCase()}</div>
+                        <div class="bottom-features">
+                          <div class="feature"><div class="feature-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg></div><div class="feature-text">100% QUALITY<br>ASSURED</div></div>
+                          <div class="feature"><div class="feature-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></div><div class="feature-text">SAFE &<br>HYGIENIC</div></div>
+                          <div class="feature"><div class="feature-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/></svg></div><div class="feature-text">24x7<br>SUPPORT</div></div>
+                        </div>
+                      </div>
+                    </div>
+                    <script>window.onload=()=>{setTimeout(()=>{window.print();window.close();},800);}<\/script>
+                  </body></html>`);
+                  pw.document.close();
+                }}>⬇ Download Card</button>
+                <button className="btn btn-ghost" onClick={() => { navigator.clipboard.writeText(`${guestUrl}?room=${roomQrModal}`); showToast('Link copied!'); }}>📋 Copy Link</button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -1196,14 +1436,15 @@ export default function DashboardPage() {
                       </span>
                     ))}
                   </div>
-                  <button className="btn btn-ghost btn-sm" onClick={() => { setServicesDraft([...hotel.services]); setEditingServices(true); }}>✏️ Edit Services</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setServicesDraft([...hotel.services]); setCustomSvcLabelsDraft(hotel.customServiceLabels || {}); setEditingServices(true); }}>✏️ Edit Services</button>
                 </>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <p style={{ fontSize: '.85rem', color: 'var(--muted)' }}>Toggle services on/off for your guests.</p>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                    {['room_service','housekeeping','laundry','spa','cab','wakeup','checkin','luggage','wifi','restaurant'].map(svc => {
+                    {Array.from(new Set(['room_service','housekeeping','laundry','spa','cab','wakeup','checkin','luggage','wifi','restaurant', ...servicesDraft])).map(svc => {
                       const active = servicesDraft.includes(svc);
+                      const label = customSvcLabelsDraft[svc] || hotel.customServiceLabels?.[svc] || svc.replace(/_/g, ' ');
                       return (
                         <button
                           key={svc}
@@ -1214,10 +1455,40 @@ export default function DashboardPage() {
                             color: active ? '#fff' : 'var(--muted)', cursor: 'pointer', transition: 'all .2s'
                           }}
                         >
-                          {svc.replace(/_/g, ' ')}
+                          {label}
                         </button>
                       );
                     })}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px', marginBottom: '8px' }}>
+                    <input 
+                      className="form-input" 
+                      placeholder="Add custom service (e.g. Valet Parking)" 
+                      style={{ maxWidth: '240px', padding: '8px 14px', fontSize: '.85rem' }}
+                      value={customSvcInput}
+                      onChange={e => setCustomSvcInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && customSvcInput) {
+                          e.preventDefault();
+                          const id = 'custom_' + Date.now();
+                          setCustomSvcLabelsDraft(prev => ({ ...prev, [id]: customSvcInput }));
+                          setServicesDraft(prev => [...prev, id]);
+                          setCustomSvcInput('');
+                        }
+                      }}
+                    />
+                    <button 
+                      className="btn btn-ghost btn-sm" 
+                      onClick={() => {
+                        if (!customSvcInput) return;
+                        const id = 'custom_' + Date.now();
+                        setCustomSvcLabelsDraft(prev => ({ ...prev, [id]: customSvcInput }));
+                        setServicesDraft(prev => [...prev, id]);
+                        setCustomSvcInput('');
+                      }}
+                    >
+                      + Add Custom
+                    </button>
                   </div>
                   <div style={{ display: 'flex', gap: '12px' }}>
                     <button className="btn btn-primary btn-sm" onClick={saveServices}>Save Changes</button>
@@ -1234,12 +1505,11 @@ export default function DashboardPage() {
                   className="form-input" 
                   style={{ minHeight: '80px', marginBottom: '16px', background: 'var(--bg2)' }}
                   placeholder="e.g. 101, 102, 103..."
-                  defaultValue={(hotel.rooms || []).map(r => r.id).join(', ')}
-                  id="room-list-input"
+                  value={roomListInput}
+                  onChange={e => setRoomListInput(e.target.value)}
                 />
                 <button className="btn btn-primary btn-sm" onClick={async () => {
-                  const input = document.getElementById('room-list-input') as HTMLTextAreaElement;
-                  const newIds = input.value.split(',').map(v => v.trim()).filter(v => v);
+                  const newIds = roomListInput.split(',').map(v => v.trim()).filter(v => v);
                   const existingRooms = hotel.rooms || [];
                   
                   // Map new IDs to existing room objects or create new ones
@@ -1251,6 +1521,7 @@ export default function DashboardPage() {
                   try {
                     await updateDoc(doc(db, 'hotels', hotel.id), { rooms: updatedRooms });
                     setHotel({ ...hotel, rooms: updatedRooms });
+                    setRoomListInput(newIds.join(', '));
                     showToast('Rooms updated successfully!');
                   } catch (err) {
                     showToast('Failed to update rooms.');
@@ -1274,7 +1545,7 @@ export default function DashboardPage() {
                     <div className={styles.qrTip} style={{ marginBottom: '8px' }}>
                       <div className={styles.qrTipNum} style={{ width: '24px', height: '24px', fontSize: '.75rem' }}>1</div>
                       <p style={{ fontSize: '.85rem', color: 'var(--text)' }}>
-                        Search for <b>@HotelQR_Bot</b> on Telegram and send <b>/myid</b>
+                        Search for <b>@v4stay_bot</b> on Telegram and send <b>/myid</b>
                       </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -1334,7 +1605,7 @@ export default function DashboardPage() {
                   ➕ Add Staff Access
                 </button>
                 <button className="btn btn-ghost btn-sm" onClick={() => {
-                  const botLink = `https://t.me/HotelQR_Bot`;
+                  const botLink = `https://t.me/v4stay_bot`;
                   const msg = `Join our Hotel Staff Bot to receive live guest requests: ${botLink}\n\nAfter starting the bot, send your Chat ID to the manager.`;
                   const waUrl = `https://wa.me/?text=${encodeURIComponent(msg)}`;
                   window.open(waUrl, '_blank');
@@ -1427,21 +1698,21 @@ export default function DashboardPage() {
 
         {/* Add Staff Modal */}
         {showAddStaffModal && (
-          <div className={styles.modalOverlay}>
-            <div className={styles.modal}>
+          <div className={styles.modalOverlay} onClick={() => setShowAddStaffModal(false)}>
+            <div className={styles.modal} onClick={e => e.stopPropagation()}>
               <h3 style={{ color: 'var(--text)', marginBottom: '16px' }}>Add Staff Access</h3>
               <div className={styles.modalForm}>
                 <div className="form-group">
-                  <label className="form-label">Full Name</label>
-                  <input className="form-input" placeholder="e.g. John Doe" value={newStaff.name} onChange={e => setNewStaff({...newStaff, name: e.target.value})} />
+                  <label htmlFor="staffName" className="form-label">Full Name</label>
+                  <input id="staffName" className="form-input" placeholder="e.g. John Doe" value={newStaff.name} onChange={e => setNewStaff({...newStaff, name: e.target.value})} autoFocus />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Email Address</label>
-                  <input type="email" className="form-input" placeholder="e.g. staff@hotel.com" value={newStaff.email} onChange={e => setNewStaff({...newStaff, email: e.target.value})} />
+                  <label htmlFor="staffEmail" className="form-label">Email Address</label>
+                  <input id="staffEmail" type="email" className="form-input" placeholder="e.g. staff@hotel.com" value={newStaff.email} onChange={e => setNewStaff({...newStaff, email: e.target.value})} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Role (Optional)</label>
-                  <input className="form-input" placeholder="e.g. Reception, Chef, Manager" value={newStaff.role} onChange={e => setNewStaff({...newStaff, role: e.target.value})} />
+                  <label htmlFor="staffRole" className="form-label">Role (Optional)</label>
+                  <input id="staffRole" className="form-input" placeholder="e.g. Reception, Chef, Manager" value={newStaff.role} onChange={e => setNewStaff({...newStaff, role: e.target.value})} />
                 </div>
               </div>
               <div className={styles.modalActions}>
@@ -1454,8 +1725,8 @@ export default function DashboardPage() {
 
         {/* ── Generated Credentials Modal ── */}
         {createdStaffCreds && (
-          <div className={styles.modalOverlay}>
-            <div className={styles.modal} style={{ maxWidth: '400px', textAlign: 'center' }}>
+          <div className={styles.modalOverlay} onClick={() => setCreatedStaffCreds(null)}>
+            <div className={styles.modal} style={{ maxWidth: '400px', textAlign: 'center' }} onClick={e => e.stopPropagation()}>
               <div style={{ fontSize: '3rem', marginBottom: '12px' }}>✅</div>
               <h3 style={{ marginBottom: '16px' }}>Staff Account Created!</h3>
               <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '24px' }}>

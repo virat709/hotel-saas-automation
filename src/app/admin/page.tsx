@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { collection, onSnapshot, updateDoc, doc } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { collection, onSnapshot, updateDoc, doc, getDoc } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth, db } from '@/lib/firebase';
+import { useRouter } from 'next/navigation';
 import styles from './admin.module.css';
 
 // ─── Types ───────────────────────────────────────────────
@@ -23,15 +25,21 @@ interface Hotel {
   planDurationMonths?: number;
   paymentUtr?: string;
   telegramChatId?: string;
+  salesAgent?: string;
 }
 
 // ─── Constants ───────────────────────────────────────────
-const ADMIN_PASSWORD = 'vrvirtuals';
 
 const PLAN_DURATION: Record<string, number> = {
-  standard: 1,   // 1 month free trial
+  standard: 12,  // 1 year paid plan
   premium: 12,   // 1 year
   enterprise: 12,
+};
+
+const PLAN_PRICE: Record<string, number> = {
+  standard: 4999,
+  premium: 9999,
+  enterprise: 19999,
 };
 
 // ─── Helpers ─────────────────────────────────────────────
@@ -81,9 +89,10 @@ const SERVICE_LABELS: Record<string, string> = {
 
 // ─── Component ───────────────────────────────────────────
 export default function AdminPage() {
+  const router = useRouter();
   const [authed, setAuthed] = useState(false);
-  const [password, setPassword] = useState('');
-  const [pwError, setPwError] = useState('');
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authError, setAuthError] = useState('');
 
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -103,7 +112,34 @@ export default function AdminPage() {
     setTimeout(() => setToast(''), 3000);
   };
 
-  // ── Real-time listener ──
+  // ── Auth & Real-time listener ──
+  useEffect(() => {
+    if (!auth) return;
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const userDoc = await getDoc(doc(db, 'users', user.uid));
+          const userData = userDoc.data();
+          if (userData && userData.role === 'superadmin') {
+            setAuthed(true);
+            setAuthChecking(false);
+          } else {
+            setAuthError('Access Denied: You do not have super admin privileges.');
+            setAuthChecking(false);
+          }
+        } catch (err) {
+          console.error('Error checking admin role:', err);
+          setAuthError('Error verifying access.');
+          setAuthChecking(false);
+        }
+      } else {
+        setAuthed(false);
+        setAuthChecking(false);
+      }
+    });
+    return unsubAuth;
+  }, []);
+
   useEffect(() => {
     if (!authed || !db) return;
     const unsub = onSnapshot(collection(db, 'hotels'), (snap) => {
@@ -117,16 +153,6 @@ export default function AdminPage() {
     });
     return unsub;
   }, [authed]);
-
-  // ── Login ──
-  const handleLogin = () => {
-    if (password === ADMIN_PASSWORD) {
-      setAuthed(true);
-      setPwError('');
-    } else {
-      setPwError('Incorrect password. Try again.');
-    }
-  };
 
   // ── Upgrade plan ──
   const handlePlanUpgrade = async () => {
@@ -172,31 +198,37 @@ export default function AdminPage() {
   };
 
   // ── KPIs ──
-  const totalRevenue = hotels.filter(h => h.plan === 'premium').length * 7999 +
-                       hotels.filter(h => h.plan === 'enterprise').length * 19999;
+  const totalRevenue = hotels.reduce((sum, h) => sum + (PLAN_PRICE[h.plan || 'standard'] || 4999), 0);
   const expiredCount = hotels.filter(h => getMonthsRemaining(h).expired).length;
   const premiumCount = hotels.filter(h => h.plan === 'premium').length;
   const enterpriseCount = hotels.filter(h => h.plan === 'enterprise').length;
 
   // ── Login Gate ──
+  if (authChecking) {
+    return (
+      <div className={styles.loading}>
+        <div className="spinner" style={{ width: 40, height: 40 }} />
+        <span>Verifying access…</span>
+      </div>
+    );
+  }
+
   if (!authed) {
     return (
       <div className={styles.loginGate}>
         <div className={styles.loginCard}>
-          <div className={styles.loginLogo}>🏨 Hotel<span className="gradient-text">QR</span></div>
+          <div className={styles.loginLogo}>🏨 V4<span className="gradient-text">Stay</span></div>
           <div className={styles.loginSub}>Admin Access — CRM Dashboard</div>
           <div className={styles.loginForm}>
-            <input
-              className="form-input"
-              type="password"
-              placeholder="Enter admin password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleLogin()}
-            />
-            {pwError && <div className={styles.loginError}>{pwError}</div>}
-            <button className="btn btn-primary" style={{ justifyContent: 'center' }} onClick={handleLogin}>
-              Unlock Dashboard →
+            {authError ? (
+              <div className={styles.loginError} style={{ textAlign: 'center', marginBottom: 16 }}>{authError}</div>
+            ) : (
+              <div style={{ textAlign: 'center', marginBottom: 16, color: 'var(--muted)' }}>
+                Please log in with a super admin account to access the CRM.
+              </div>
+            )}
+            <button className="btn btn-primary" style={{ justifyContent: 'center' }} onClick={() => router.push('/login')}>
+              Go to Login →
             </button>
           </div>
         </div>
@@ -218,7 +250,7 @@ export default function AdminPage() {
       {/* ── Header ── */}
       <header className={styles.header}>
         <div className={styles.headerLeft}>
-          <div className={styles.logo}>🏨 Hotel<span className="gradient-text">QR</span></div>
+          <div className={styles.logo}>🏨 V4<span className="gradient-text">Stay</span></div>
           <div className={styles.adminBadge}>CRM Dashboard</div>
         </div>
         <div className={styles.headerRight}>
@@ -226,7 +258,7 @@ export default function AdminPage() {
             <span className={styles.dot} />
             <span>Live · Updated {lastUpdated.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={() => setAuthed(false)}>🔒 Lock</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => router.push('/dashboard')}>⬅ Back</button>
         </div>
       </header>
 
@@ -311,6 +343,7 @@ export default function AdminPage() {
                   <th>Rooms</th>
                   <th>Menu Items</th>
                   <th>Contact</th>
+                  <th>Sales Rep</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -400,6 +433,11 @@ export default function AdminPage() {
                         <div style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: 2 }}>{hotel.email || '—'}</div>
                       </td>
 
+                      {/* Sales Rep */}
+                      <td>
+                        <div style={{ fontSize: '0.82rem', color: 'var(--text)' }}>{hotel.salesAgent || '—'}</div>
+                      </td>
+
                       {/* Actions */}
                       <td>
                         <div className={styles.actions}>
@@ -454,6 +492,7 @@ export default function AdminPage() {
                 { label: 'Rooms', value: `${selectedHotel.rooms?.length || 0} rooms` },
                 { label: 'Menu Items', value: `${selectedHotel.menu?.length || 0} items` },
                 { label: 'Payment UTR', value: selectedHotel.paymentUtr || 'Not paid' },
+                { label: 'Sales Agent', value: selectedHotel.salesAgent || '—' },
                 { label: 'Telegram', value: selectedHotel.telegramChatId ? '✅ Linked' : '❌ Not linked' },
               ].map(({ label, value }) => (
                 <div key={label} className={styles.detailItem}>
@@ -483,8 +522,8 @@ export default function AdminPage() {
                 value={newPlan}
                 onChange={e => setNewPlan(e.target.value as any)}
               >
-                <option value="standard">🆓 Standard (Free Trial — 1 month)</option>
-                <option value="premium">👑 Premium (₹7,999/year — 12 months)</option>
+                <option value="standard">📦 Standard (₹4,999/year — 12 months)</option>
+                <option value="premium">👑 Premium (₹9,999/year — 12 months)</option>
                 <option value="enterprise">🚀 Enterprise (₹19,999/year — 12 months)</option>
               </select>
               <button
@@ -508,7 +547,7 @@ export default function AdminPage() {
                 🔗 View Guest Portal
               </a>
               <a
-                href={`mailto:${selectedHotel.email}?subject=HotelQR%20-%20Your%20Plan%20Update`}
+                href={`mailto:${selectedHotel.email}?subject=V4Stay%20-%20Your%20Plan%20Update`}
                 className="btn btn-ghost btn-sm"
               >
                 📧 Email Hotel

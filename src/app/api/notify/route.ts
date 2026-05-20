@@ -18,12 +18,43 @@ if (!admin.apps.length) {
   }
 }
 
+// In-memory rate limiter: Max 15 requests per minute per hotelId
+const notifyRateLimitStore = new Map<string, { count: number; windowStart: number }>();
+
+function checkNotifyRateLimit(hotelId: string): boolean {
+  const now = Date.now();
+  const record = notifyRateLimitStore.get(hotelId);
+  const WINDOW_MS = 60 * 1000; // 1 minute
+  const MAX_REQS = 15;
+
+  if (!record) {
+    notifyRateLimitStore.set(hotelId, { count: 1, windowStart: now });
+    return true;
+  }
+
+  if (now - record.windowStart > WINDOW_MS) {
+    notifyRateLimitStore.set(hotelId, { count: 1, windowStart: now });
+    return true;
+  }
+
+  if (record.count >= MAX_REQS) {
+    return false;
+  }
+
+  notifyRateLimitStore.set(hotelId, { count: record.count + 1, windowStart: record.windowStart });
+  return true;
+}
+
 export async function POST(req: Request) {
   try {
     const { hotelId, type, roomNumber, guestName, items, service, total } = await req.json();
 
     if (!hotelId) {
       return NextResponse.json({ error: 'Missing hotelId' }, { status: 400 });
+    }
+
+    if (!checkNotifyRateLimit(hotelId)) {
+      return NextResponse.json({ error: 'Rate limit exceeded. Too many notifications sent recently.' }, { status: 429 });
     }
 
     // 1. Get hotel data (to find the telegramChatId)

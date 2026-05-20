@@ -2,22 +2,41 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Hotels: Anyone can read, only the owner can write
+    // Helper functions
+    function isSuperAdmin() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
+    }
+    
+    function getUserHotelId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.hotelId;
+    }
+
+    // Hotels: Anyone can read specific hotel (guests). Only superadmin can list all.
     match /hotels/{hotelId} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == resource.data.ownerId;
+      allow get: if true;
+      allow list: if request.auth != null && isSuperAdmin();
+      allow write: if request.auth != null && (getUserHotelId() == hotelId || request.auth.uid == resource.data.ownerId || isSuperAdmin());
       allow create: if request.auth != null;
     }
 
-    // Orders: Anyone can create, only authenticated users (staff/owner) can read/update
+    // Orders: Anyone can create (guests), only staff of that hotel or superadmin can read/update
     match /orders/{orderId} {
       allow create: if true;
-      allow read, update, delete: if request.auth != null;
+      allow read, update, delete: if request.auth != null && (getUserHotelId() == resource.data.hotelId || isSuperAdmin());
     }
 
-    // Users: Users can read/write their own document
+    // Users: Read own, read if in same hotel, superadmin can read all. Owner can write staff in same hotel.
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null && (request.auth.uid == userId || getUserHotelId() == resource.data.hotelId || isSuperAdmin());
+      allow write: if request.auth != null && (request.auth.uid == userId || (getUserHotelId() == resource.data.hotelId && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'owner') || isSuperAdmin());
+      allow create: if request.auth != null; // Needed for onboarding
+    }
+    
+    // Ratings: Guests can create, staff can read
+    match /ratings/{ratingId} {
+      allow create: if true;
+      allow read: if request.auth != null && (getUserHotelId() == resource.data.hotelId || isSuperAdmin());
+      allow update, delete: if request.auth != null && isSuperAdmin();
     }
   }
 }

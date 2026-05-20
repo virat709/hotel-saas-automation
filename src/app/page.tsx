@@ -83,8 +83,8 @@ export default function LandingPage() {
       <nav className={`navbar ${scrolled ? 'scrolled' : ''}`}>
         <div className="nav-inner">
           <div className="nav-logo">
-            <span>🏨</span>
-            <span>Hotel<span className="gradient-text">QR</span></span>
+            <img src="/v4-logo.png" alt="V4Stay Logo" style={{ height: '32px', width: 'auto', objectFit: 'contain' }} />
+            <span>V4<span className="gradient-text">Stay</span></span>
           </div>
           <ul className="nav-links">
             <li><a href="#features" className="nav-link">Features</a></li>
@@ -116,7 +116,7 @@ export default function LandingPage() {
             </p>
             <div className={styles.heroCtas}>
               <Link href={user ? (hasHotel ? '/dashboard' : '/onboarding') : '/signup'} className="btn btn-primary btn-lg">
-                {user ? (hasHotel ? 'Go to Dashboard →' : 'Complete Setup →') : 'Start for Free →'}
+                {user ? (hasHotel ? 'Go to Dashboard →' : 'Complete Setup →') : 'Start Now →'}
               </Link>
               {!user && <a href="#how" className="btn btn-ghost btn-lg">See How It Works</a>}
             </div>
@@ -181,14 +181,14 @@ export default function LandingPage() {
           <div className="sec-head">
             <div className="sec-badge">💎 Pricing</div>
             <h2 className="sec-title">Simple, <span className="gradient-text">Transparent</span> Pricing</h2>
-            <p className="sec-sub">Start for free, upgrade when you need more power.</p>
+            <p className="sec-sub">Choose a plan that fits your hotel's needs.</p>
           </div>
           <div className={styles.pricingGrid}>
             {/* Standard */}
             <div className={styles.pricingCard}>
               <div className={styles.planName}>Standard</div>
-              <div className={styles.planPrice}>Free</div>
-              <div className={styles.planPriceSub}>Forever</div>
+              <div className={styles.planPrice}>₹4,999</div>
+              <div className={styles.planPriceSub}>per year</div>
               <ul className={styles.planFeatures}>
                 <li>Guest QR Portal</li>
                 <li>Digital Service Menu</li>
@@ -201,7 +201,7 @@ export default function LandingPage() {
             {/* Premium */}
             <div className={`${styles.pricingCard} ${styles.pricingCardActive}`}>
               <div className={styles.planName}>Premium</div>
-              <div className={styles.planPrice}>₹7,999</div>
+              <div className={styles.planPrice}>₹9,999</div>
               <div className={styles.planPriceSub}>per year</div>
               <ul className={styles.planFeatures}>
                 <li style={{ borderBottom: '1px solid var(--glass-b)', paddingBottom: '8px', marginBottom: '12px' }}><b>✅ Everything in Standard +</b></li>
@@ -217,7 +217,7 @@ export default function LandingPage() {
             {/* Enterprise */}
             <div className={styles.pricingCard}>
               <div className={styles.planName}>Enterprise</div>
-              <div className={styles.planPrice}>₹9,999</div>
+              <div className={styles.planPrice}>₹19,999</div>
               <div className={styles.planPriceSub}>per year</div>
               <ul className={styles.planFeatures}>
                 <li style={{ borderBottom: '1px solid var(--glass-b)', paddingBottom: '8px', marginBottom: '12px' }}><b>✅ Everything in Premium +</b></li>
@@ -238,7 +238,7 @@ export default function LandingPage() {
           <div className={styles.ctaBox}>
             <div className="sec-badge">🎯 Get Started</div>
             <h2>Ready to Transform<br /><span className="gradient-text">Your Hotel?</span></h2>
-            <p>Join hundreds of hotels already running on HotelQR. Free to start — no credit card required.</p>
+            <p>Join hundreds of hotels already running on V4Stay. Get started today — setup takes just minutes.</p>
             <Link href="/signup" className="btn btn-primary btn-lg" style={{ marginTop: '32px' }}>
               Create Your Hotel Account →
             </Link>
@@ -251,8 +251,8 @@ export default function LandingPage() {
         <div className="container">
           <div className={styles.footerInner}>
             <Link href="/admin" className="nav-logo" style={{ textDecoration: 'none', cursor: 'default' }}>
-              <span>🏨</span>
-              <span>Hotel<span className="gradient-text">QR</span></span>
+              <img src="/v4-logo.png" alt="V4Stay Logo" style={{ height: '24px', width: 'auto', objectFit: 'contain' }} />
+              <span>V4<span className="gradient-text">Stay</span></span>
             </Link>
             <p style={{ fontSize: '.85rem' }}>Powered by V4 Virtual Services, Ahmedabad</p>
             <div className={styles.footerLinks}>

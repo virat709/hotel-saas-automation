@@ -3,6 +3,38 @@ import { NextRequest, NextResponse } from 'next/server';
 // Store OTPs in memory (in production, use Redis or Firestore with TTL)
 const otpStore = new Map<string, { otp: string; expiresAt: number }>();
 
+// Simple in-memory rate limit store
+const rateLimitStore = new Map<string, { count: number; lastReqTime: number }>();
+
+function checkRateLimit(phone: string): { allowed: boolean; message?: string } {
+  const now = Date.now();
+  const record = rateLimitStore.get(phone);
+  
+  if (!record) {
+    rateLimitStore.set(phone, { count: 1, lastReqTime: now });
+    return { allowed: true };
+  }
+
+  // Block if less than 2 minutes since last request
+  if (now - record.lastReqTime < 2 * 60 * 1000) {
+    return { allowed: false, message: 'Please wait 2 minutes before requesting another OTP.' };
+  }
+
+  // Reset if more than 1 hour
+  if (now - record.lastReqTime > 60 * 60 * 1000) {
+    rateLimitStore.set(phone, { count: 1, lastReqTime: now });
+    return { allowed: true };
+  }
+
+  // Max 5 per hour
+  if (record.count >= 5) {
+    return { allowed: false, message: 'Maximum OTP requests reached. Please try again in an hour.' };
+  }
+
+  rateLimitStore.set(phone, { count: record.count + 1, lastReqTime: now });
+  return { allowed: true };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { phone } = await req.json();
@@ -15,6 +47,12 @@ export async function POST(req: NextRequest) {
     const cleanPhone = phone.replace(/\D/g, '').replace(/^91/, '').slice(-10);
     if (cleanPhone.length !== 10) {
       return NextResponse.json({ error: 'Invalid Indian phone number' }, { status: 400 });
+    }
+
+    // Check Rate Limit
+    const rateLimit = checkRateLimit(cleanPhone);
+    if (!rateLimit.allowed) {
+      return NextResponse.json({ error: 'Rate limit exceeded', details: rateLimit.message }, { status: 429 });
     }
 
     // Generate 6-digit OTP
@@ -40,7 +78,7 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         route: 'q', // quick DLT route
-        message: `Your hotel check-in OTP is ${otp}. Valid for 10 minutes. - HotelQR`,
+        message: `Your hotel check-in OTP is ${otp}. Valid for 10 minutes. - V4Stay`,
         language: 'english',
         flash: 0,
         numbers: cleanPhone,

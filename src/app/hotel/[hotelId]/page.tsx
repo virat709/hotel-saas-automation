@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, use } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { doc, getDoc, addDoc, collection } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import styles from './guest.module.css';
@@ -83,14 +84,23 @@ export default function GuestPage({ params }: { params: Promise<{ hotelId: strin
   const [cartOpen, setCartOpen] = useState(false);
 
   // Guest info
-  const [roomNumber, setRoomNumber] = useState('');
+  const searchParams = useSearchParams();
+  const [roomNumber, setRoomNumber] = useState(searchParams.get('room') || '');
   const [guestName, setGuestName] = useState('');
-  const [infoSet, setInfoSet] = useState(false);
+  const [infoSet, setInfoSet] = useState(!!(searchParams.get('room') && ''));
 
   // States
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState('');
   const [selectedService, setSelectedService] = useState('');
+
+  // Feature 1: Guest Ratings
+  const [showRating, setShowRating] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [ratingHover, setRatingHover] = useState(0);
+  const [ratingComment, setRatingComment] = useState('');
+  const [ratingSubmitted, setRatingSubmitted] = useState(false);
+  const [ratingSubmitting, setRatingSubmitting] = useState(false);
 
   useEffect(() => {
     console.log('Guest Portal Loading for Hotel:', hotelId);
@@ -205,9 +215,35 @@ export default function GuestPage({ params }: { params: Promise<{ hotelId: strin
 
       setSuccess(`✅ ${label} requested! Our team will be with you soon.`);
       setTimeout(() => setSuccess(''), 5000);
+      // Show rating prompt 8 seconds after first request
+      if (!ratingSubmitted) setTimeout(() => setShowRating(true), 8000);
     } finally {
       setSubmitting(false);
       setSelectedService('');
+    }
+  };
+
+  // Feature 1: Submit Rating to Firestore
+  const submitRating = async () => {
+    if (!rating) return;
+    setRatingSubmitting(true);
+    try {
+      await addDoc(collection(db, 'ratings'), {
+        hotelId,
+        roomNumber,
+        guestName,
+        rating,
+        comment: ratingComment,
+        createdAt: new Date().toISOString(),
+      });
+      setRatingSubmitted(true);
+      setShowRating(false);
+      setSuccess('⭐ Thank you for your feedback!');
+      setTimeout(() => setSuccess(''), 4000);
+    } catch {
+      // silently fail — don't interrupt guest experience
+    } finally {
+      setRatingSubmitting(false);
     }
   };
 
@@ -449,6 +485,61 @@ export default function GuestPage({ params }: { params: Promise<{ hotelId: strin
         <div className={styles.reception}>
           <span>Need help?</span>
           <a href={`tel:${hotel.phone}`} className="btn btn-ghost btn-sm">📞 Call Reception</a>
+          {/* Feature 4: WhatsApp fallback */}
+          <a
+            href={`https://wa.me/${hotel.phone.replace(/\D/g, '')}?text=${encodeURIComponent(`Hi, I'm ${guestName} from Room ${roomNumber} at ${hotel.name}. I need assistance.`)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn-ghost btn-sm"
+            style={{ color: '#25D366' }}
+          >
+            💬 WhatsApp
+          </a>
+        </div>
+      )}
+
+      {/* Feature 1: Rating Modal */}
+      {showRating && !ratingSubmitted && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 9998, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: '0 16px 24px' }}>
+          <div style={{ background: 'var(--bg2)', borderRadius: '24px 24px 24px 24px', padding: '28px 24px', width: '100%', maxWidth: '420px', border: '1px solid var(--glass-b)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ fontSize: '1.1rem', color: 'var(--text)', margin: 0 }}>How are we doing? ⭐</h3>
+              <button onClick={() => setShowRating(false)} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+            </div>
+            <p style={{ color: 'var(--muted)', fontSize: '.85rem', marginBottom: '20px' }}>Rate your experience at {hotel.name}</p>
+            {/* Star rating */}
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', marginBottom: '20px' }}>
+              {[1,2,3,4,5].map(star => (
+                <button
+                  key={star}
+                  onClick={() => setRating(star)}
+                  onMouseEnter={() => setRatingHover(star)}
+                  onMouseLeave={() => setRatingHover(0)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '2.2rem', transition: 'transform 0.15s', transform: (ratingHover || rating) >= star ? 'scale(1.2)' : 'scale(1)' }}
+                >
+                  {(ratingHover || rating) >= star ? '⭐' : '☆'}
+                </button>
+              ))}
+            </div>
+            <textarea
+              className="form-input"
+              placeholder="Any comments? (optional)"
+              value={ratingComment}
+              onChange={e => setRatingComment(e.target.value)}
+              style={{ marginBottom: '16px', minHeight: '72px', resize: 'none' }}
+            />
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button className="btn btn-ghost" style={{ flex: 1, justifyContent: 'center' }} onClick={() => setShowRating(false)}>Later</button>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 2, justifyContent: 'center' }}
+                onClick={submitRating}
+                disabled={!rating || ratingSubmitting}
+              >
+                {ratingSubmitting ? <span className="spinner" /> : 'Submit Feedback →'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

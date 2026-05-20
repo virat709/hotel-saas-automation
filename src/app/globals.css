@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════
-   HOTEL SAAS — GLOBAL STYLES
+   V4STAY — GLOBAL STYLES
    Based on V4 Virtual Services Theme
 ═══════════════════════════════════════════ */
 
@@ -151,6 +151,16 @@ p { color: var(--muted); line-height: 1.7; }
 }
 .form-input:focus { border-color: var(--mid); }
 .form-input::placeholder { color: var(--muted); }
+
+/* Prevent ugly webkit autofill background */
+.form-input:-webkit-autofill,
+.form-input:-webkit-autofill:hover,
+.form-input:-webkit-autofill:focus,
+.form-input:-webkit-autofill:active {
+  transition: background-color 5000s ease-in-out 0s !important;
+  -webkit-text-fill-color: var(--text) !important;
+  caret-color: var(--text) !important;
+}
 
 .form-textarea {
   resize: vertical;

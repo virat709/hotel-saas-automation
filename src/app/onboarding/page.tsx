@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import QRCode from 'react-qr-code';
 import styles from './onboarding.module.css';
@@ -23,6 +23,7 @@ interface HotelData {
   city: string;
   phone: string;
   email: string;
+  salesAgent?: string;
 }
 
 const ALL_SERVICES = [
@@ -60,7 +61,7 @@ export default function OnboardingPage() {
   const [plan, setPlan] = useState<'standard'|'premium'|'enterprise'>('standard');
 
   // Step 2: Hotel Details
-  const [hotel, setHotel] = useState<HotelData>({ name: '', address: '', city: '', phone: '', email: '' });
+  const [hotel, setHotel] = useState<HotelData>({ name: '', address: '', city: '', phone: '', email: '', salesAgent: '' });
 
   // Step 2: Services
   const [services, setServices] = useState<string[]>([]);
@@ -141,11 +142,12 @@ export default function OnboardingPage() {
         rooms: roomList.split(',').map(r => r.trim()).filter(r => r).map(r => ({ id: r, status: 'empty' })),
         wifiName,
         wifiPassword,
-        plan, // Store the selected plan
-        paymentUtr: utr || null, // Store UTR if paid
+        salesAgent: hotel.salesAgent || null,
+        plan,
+        paymentUtr: utr || null,
         createdAt: new Date().toISOString(),
         planStartDate: new Date().toISOString(),
-        planDurationMonths: plan === 'standard' ? 1 : 12,
+        planDurationMonths: 12,
         active: true,
       };
 
@@ -164,9 +166,7 @@ export default function OnboardingPage() {
     }
   };
 
-  const stepLabels = plan === 'standard'
-    ? ['Plan', 'Hotel', 'Services', 'Menu', 'Rooms']
-    : ['Plan', 'Hotel', 'Services', 'Menu', 'Rooms', 'Payment'];
+  const stepLabels = ['Plan', 'Hotel', 'Services', 'Menu', 'Rooms', 'Payment'];
 
   return (
     <div className={styles.page}>
@@ -174,9 +174,9 @@ export default function OnboardingPage() {
         {/* Header */}
         <div className={styles.header}>
           <div className="nav-logo" style={{ justifyContent: 'center', marginBottom: '32px' }}>
-            <span>🏨</span>
+            <img src="/v4-logo.png" alt="V4Stay Logo" style={{ height: '32px', width: 'auto', objectFit: 'contain', marginRight: '8px' }} />
             <span style={{ fontFamily: 'Outfit', fontWeight: 800, fontSize: '1.3rem' }}>
-              Hotel<span className="gradient-text">QR</span>
+              V4<span className="gradient-text">Stay</span>
             </span>
           </div>
           <h2 className={styles.title}>Setup Your Hotel</h2>
@@ -210,8 +210,8 @@ export default function OnboardingPage() {
                 onClick={() => setPlan('standard')}
               >
                 <div className={styles.planName}>Standard</div>
-                <div className={styles.planPrice}>Free</div>
-                <div className={styles.planPriceSub}>Forever</div>
+                <div className={styles.planPrice}>₹4,999</div>
+                <div className={styles.planPriceSub}>per year</div>
                 <ul className={styles.planFeatures}>
                   <li>Guest QR Portal</li>
                   <li>Digital Service Menu</li>
@@ -226,7 +226,7 @@ export default function OnboardingPage() {
                 onClick={() => setPlan('premium')}
               >
                 <div className={styles.planName}>Premium</div>
-                <div className={styles.planPrice}>₹7,999</div>
+                <div className={styles.planPrice}>₹9,999</div>
                 <div className={styles.planPriceSub}>per year</div>
                 <ul className={styles.planFeatures}>
                   <li style={{ borderBottom: '1px solid var(--glass-b)', paddingBottom: '8px', marginBottom: '12px' }}><b>✅ Everything in Standard +</b></li>
@@ -244,7 +244,7 @@ export default function OnboardingPage() {
                 onClick={() => setPlan('enterprise')}
               >
                 <div className={styles.planName}>Enterprise</div>
-                <div className={styles.planPrice}>₹9,999</div>
+                <div className={styles.planPrice}>₹19,999</div>
                 <div className={styles.planPriceSub}>per year</div>
                 <ul className={styles.planFeatures}>
                   <li style={{ borderBottom: '1px solid var(--glass-b)', paddingBottom: '8px', marginBottom: '12px' }}><b>✅ Everything in Premium +</b></li>
@@ -288,6 +288,10 @@ export default function OnboardingPage() {
               <div className="form-group" style={{ gridColumn: '1/-1' }}>
                 <label className="form-label">Hotel Email</label>
                 <input className="form-input" type="email" placeholder="info@yourhotel.com" value={hotel.email} onChange={e => setHotel(p => ({ ...p, email: e.target.value }))} />
+              </div>
+              <div className="form-group" style={{ gridColumn: '1/-1' }}>
+                <label className="form-label">Sales Representative / Referral Code (Optional)</label>
+                <input className="form-input" placeholder="e.g. John Doe / REFER123" value={hotel.salesAgent || ''} onChange={e => setHotel(p => ({ ...p, salesAgent: e.target.value }))} />
               </div>
             </div>
             <div className={styles.actions}>
@@ -459,13 +463,9 @@ export default function OnboardingPage() {
             <div className={styles.actions}>
               <button className="btn btn-ghost" onClick={() => services.includes('restaurant') ? setStep(4) : setStep(3)}>← Back</button>
               <button className="btn btn-primary" onClick={async () => {
-                if (plan !== 'standard') {
-                  setStep(6);
-                } else {
-                  handleFinish();
-                }
+                setStep(6);
               }} disabled={loading}>
-                {plan === 'standard' ? '🚀 Launch My Hotel →' : 'Continue to Payment →'}
+                Continue to Payment →
               </button>
             </div>
           </div>
@@ -475,41 +475,44 @@ export default function OnboardingPage() {
         {step === 6 && (
           <div className={styles.card}>
             <h3 className={styles.stepTitle}>💳 Complete Your Payment</h3>
-            <p style={{ color: 'var(--muted)', marginBottom: '24px' }}>Scan the QR code below using any UPI app (GPay, PhonePe, Paytm) to pay for your {plan} plan.</p>
-            
-            {/* Payment UI */}
+            <p style={{ color: 'var(--muted)', marginBottom: '24px' }}>Scan the QR code below using any UPI app (GPay, PhonePe, Paytm) to pay for your <b style={{ color: 'var(--primary)' }}>{plan.charAt(0).toUpperCase() + plan.slice(1)}</b> plan.</p>
+
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', background: 'var(--glass)', padding: '32px', borderRadius: 'var(--r-lg)', border: '1px solid var(--glass-b)', marginBottom: '24px' }}>
               <div style={{ background: 'white', padding: '16px', borderRadius: '12px', marginBottom: '16px' }}>
-                <QRCode value={`upi://pay?pa=9652172595@axl&pn=Hotel%20SaaS&am=${plan === 'premium' ? '7999' : '9999'}&cu=INR`} size={180} />
+                <QRCode value={`upi://pay?pa=9652172595@axl&pn=V4Stay&am=${plan === 'standard' ? '4999' : plan === 'premium' ? '9999' : '19999'}&cu=INR`} size={180} />
               </div>
-              <h4 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text)', marginBottom: '4px' }}>₹{plan === 'premium' ? '7,999' : '9,999'}</h4>
-              <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '16px' }}>UPI ID: <b>9652172595@axl</b></p>
-              
-              <div style={{ width: '100%', maxWidth: '300px' }}>
-                <label className="form-label">Transaction ID (UTR) *</label>
-                <input 
-                  className="form-input" 
-                  placeholder="Enter 12-digit UTR number" 
-                  value={utr}
-                  onChange={e => setUtr(e.target.value)}
-                />
-                <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '8px' }}>After paying, enter the reference number here so we can verify your payment.</p>
-              </div>
+              <h4 style={{ fontSize: '1.8rem', fontWeight: 900, color: 'var(--text)', marginBottom: '4px', fontFamily: 'Outfit' }}>₹{plan === 'standard' ? '4,999' : plan === 'premium' ? '9,999' : '19,999'}</h4>
+              <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '8px' }}>UPI ID: <b style={{ color: 'var(--text)' }}>9652172595@axl</b></p>
+              <p style={{ fontSize: '0.78rem', color: 'var(--muted)' }}>Scan with GPay · PhonePe · Paytm · Any UPI App</p>
             </div>
 
-            {error && <div className="toast toast-error" style={{position: 'static', marginBottom: '20px', borderRadius: 'var(--r)'}}>{error}</div>}
+            <div style={{ maxWidth: '360px', margin: '0 auto', width: '100%' }}>
+              <label className="form-label">Transaction Reference / UTR Number *</label>
+              <input
+                className="form-input"
+                placeholder="Enter 12-digit UTR number after paying"
+                value={utr}
+                onChange={e => setUtr(e.target.value)}
+              />
+              <p style={{ fontSize: '0.75rem', color: 'var(--muted)', marginTop: '8px' }}>
+                After paying, open your UPI app → Transaction History → copy the 12-digit reference number and paste it here. We will manually verify within 2 hours.
+              </p>
+            </div>
 
-            <div className={styles.actions}>
+            {error && <div className="toast toast-error" style={{ position: 'static', marginTop: '16px', borderRadius: 'var(--r)' }}>{error}</div>}
+
+            <div className={styles.actions} style={{ marginTop: '24px' }}>
               <button className="btn btn-ghost" onClick={() => setStep(5)}>← Back</button>
-              <button className="btn btn-primary" onClick={async () => {
-                if (!utr || utr.length < 8) {
-                  setError('Please enter a valid Transaction ID / UTR.');
-                  return;
-                }
-                setLoading(true);
-                handleFinish();
-              }} disabled={loading}>
-                {loading ? <span className="spinner" /> : '✅ Verify & Launch Hotel'}
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  if (!utr || utr.length < 8) { setError('Please enter a valid UTR / Transaction Reference number.'); return; }
+                  setError('');
+                  handleFinish();
+                }}
+                disabled={loading}
+              >
+                {loading ? <span className="spinner" /> : '✅ Submit & Launch Hotel'}
               </button>
             </div>
           </div>
