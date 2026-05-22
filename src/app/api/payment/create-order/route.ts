@@ -1,11 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Razorpay from 'razorpay';
 
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID!,
-  key_secret: process.env.RAZORPAY_KEY_SECRET!,
-});
-
 const PLAN_PRICES: Record<string, number> = {
   standard: 499900,  // ₹4,999 in paise
   premium: 999900,   // ₹9,999 in paise
@@ -14,6 +9,11 @@ const PLAN_PRICES: Record<string, number> = {
 
 export async function POST(req: NextRequest) {
   try {
+    const razorpay = new Razorpay({
+      key_id: process.env.RAZORPAY_KEY_ID || '',
+      key_secret: process.env.RAZORPAY_KEY_SECRET || '',
+    });
+
     const { plan, hotelName, email } = await req.json();
 
     if (!plan || !PLAN_PRICES[plan]) {
