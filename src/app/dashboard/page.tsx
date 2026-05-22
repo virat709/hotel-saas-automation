@@ -1273,15 +1273,15 @@ export default function DashboardPage() {
                 <div className={styles.qrTip}>
                   <div className={styles.qrTipNum}>2</div>
                   <div>
-                    <strong>Guest Scanning</strong>
-                    <p style={{ fontSize: '.85rem', color: 'var(--muted)' }}>Guests scan with their phone camera, enter their room number, and start ordering.</p>
+                    <strong>Use Per-Room QR Codes</strong>
+                    <p style={{ fontSize: '.85rem', color: 'var(--muted)' }}>Use the <strong>Per-Room QR Codes</strong> below — each one auto-fills the room number. Guests only need to enter their name. No manual room entry!</p>
                   </div>
                 </div>
                 <div className={styles.qrTip}>
                   <div className={styles.qrTipNum}>3</div>
                   <div>
                     <strong>Live Tracking</strong>
-                    <p style={{ fontSize: '.85rem', color: 'var(--muted)' }}>Requests pop up in your &apos;Orders&apos; tab instantly with a sound alert.</p>
+                    <p style={{ fontSize: '.85rem', color: 'var(--muted)' }}>Requests appear in your &apos;Orders&apos; tab instantly with room number and guest name already attached.</p>
                   </div>
                 </div>
               </div>
@@ -1291,7 +1291,7 @@ export default function DashboardPage() {
             {(hotel?.rooms || []).length > 0 && (
               <div style={{ marginTop: '32px', padding: '24px', background: 'var(--glass)', borderRadius: 'var(--r-lg)', border: '1px solid var(--glass-b)' }}>
                 <h3 style={{ color: 'var(--text)', marginBottom: '8px', fontSize: '1.1rem' }}>🔑 Per-Room QR Codes</h3>
-                <p style={{ fontSize: '.82rem', color: 'var(--muted)', marginBottom: '20px' }}>Each QR auto-fills the room number for guests — no manual entry needed!</p>
+                <p style={{ fontSize: '.82rem', color: 'var(--muted)', marginBottom: '20px' }}>Print and place these in each room. Guests scan → enter only their name → done! Room number is auto-filled from the QR.</p>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: '10px' }}>
                   {(hotel?.rooms || []).map(room => (
                     <button

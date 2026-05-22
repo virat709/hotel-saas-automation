@@ -85,9 +85,11 @@ export default function GuestPage({ params }: { params: Promise<{ hotelId: strin
 
   // Guest info
   const searchParams = useSearchParams();
-  const [roomNumber, setRoomNumber] = useState(searchParams.get('room') || '');
-  const [guestName, setGuestName] = useState('');
-  const [infoSet, setInfoSet] = useState(!!(searchParams.get('room') && ''));
+  const roomFromQR = searchParams.get('room') || '';
+  const [roomNumber, setRoomNumber] = useState(roomFromQR);
+  const [guestName, setGuestName] = useState(roomFromQR ? 'Guest' : '');
+  // If room number is already embedded in the QR URL, skip asking for it
+  const [infoSet, setInfoSet] = useState(!!roomFromQR);
 
   // States
   const [submitting, setSubmitting] = useState(false);
@@ -287,27 +289,50 @@ export default function GuestPage({ params }: { params: Promise<{ hotelId: strin
 
   // Guest Info Screen
   if (!infoSet) {
+    const hasRoomFromQR = !!roomFromQR;
     return (
       <div className={styles.guestInfoPage}>
         <div className={styles.guestInfoCard}>
           <div className={styles.hotelBadge}>🏨</div>
           <h2 className={styles.hotelTitle}>{hotel.name}</h2>
-          <p style={{ color: 'var(--muted)', marginBottom: '32px', textAlign: 'center' }}>
-            {hotel.city} · Welcome! Please enter your details to continue.
-          </p>
+          {hasRoomFromQR ? (
+            <p style={{ color: 'var(--muted)', marginBottom: '32px', textAlign: 'center' }}>
+              {hotel.city} · Room <strong style={{ color: 'var(--mid)' }}>{roomFromQR}</strong> · Welcome!
+            </p>
+          ) : (
+            <p style={{ color: 'var(--muted)', marginBottom: '32px', textAlign: 'center' }}>
+              {hotel.city} · Welcome! Please enter your details to continue.
+            </p>
+          )}
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <div className="form-group">
               <label className="form-label">Your Name</label>
-              <input className="form-input" placeholder="e.g. Ravi Shah" value={guestName} onChange={e => setGuestName(e.target.value)} />
+              <input
+                className="form-input"
+                placeholder="e.g. Ravi Shah"
+                value={guestName}
+                onChange={e => setGuestName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && guestName && roomNumber) setInfoSet(true); }}
+                autoFocus
+              />
             </div>
-            <div className="form-group">
-              <label className="form-label">Room Number</label>
-              <input className="form-input" placeholder="e.g. 201" value={roomNumber} onChange={e => setRoomNumber(e.target.value)} />
-            </div>
+            {/* Only show room number field if NOT already embedded in QR */}
+            {!hasRoomFromQR && (
+              <div className="form-group">
+                <label className="form-label">Room Number</label>
+                <input
+                  className="form-input"
+                  placeholder="e.g. 201"
+                  value={roomNumber}
+                  onChange={e => setRoomNumber(e.target.value)}
+                />
+              </div>
+            )}
             <button
               className="btn btn-primary"
               style={{ width: '100%', justifyContent: 'center', marginTop: '8px' }}
               onClick={() => { if (roomNumber && guestName) setInfoSet(true); }}
+              disabled={!guestName || !roomNumber}
             >
               Continue →
             </button>
@@ -323,7 +348,7 @@ export default function GuestPage({ params }: { params: Promise<{ hotelId: strin
       <header className={styles.headerHero} style={{ backgroundImage: `linear-gradient(to bottom, rgba(13,13,18,0.5), rgba(13,13,18,0.9)), url('/v4-logo.png')` }}>
         <div className={styles.headerContentWrapper}>
           <h1 className={styles.headerTitle}>{hotel.name}</h1>
-          <div className={styles.headerSub}>Room {roomNumber} • {guestName}</div>
+          <div className={styles.headerSub}>Room {roomNumber}{guestName && guestName !== 'Guest' ? ` • ${guestName}` : ''}</div>
         </div>
       </header>
 
